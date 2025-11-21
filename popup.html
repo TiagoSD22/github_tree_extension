@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GitHub Dependency Tree</title>
+  <style>
+    body {
+      width: 300px;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+      margin: 0;
+    }
+    
+    h1 {
+      font-size: 18px;
+      margin: 0 0 12px 0;
+      color: #1f2328;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    p {
+      font-size: 13px;
+      color: #656d76;
+      line-height: 1.6;
+      margin: 0 0 16px 0;
+    }
+    
+    .feature-list {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 20px 0;
+    }
+    
+    .feature-list li {
+      padding: 8px 0;
+      font-size: 13px;
+      color: #656d76;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    
+    .feature-list li::before {
+      content: '✓';
+      color: #6366f1;
+      font-weight: bold;
+      flex-shrink: 0;
+    }
+    
+    .instructions {
+      background: #f6f8fa;
+      padding: 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      color: #656d76;
+      margin-top: 16px;
+    }
+    
+    .instructions strong {
+      color: #1f2328;
+    }
+    
+    a {
+      color: #0969da;
+      text-decoration: none;
+    }
+    
+    a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <h1>📊 Dependency Tree</h1>
+  <p>Visualize file dependencies in GitHub repositories</p>
+  
+  <ul class="feature-list">
+    <li>Shows files that import the current file</li>
+    <li>Supports JavaScript, TypeScript, and Python</li>
+    <li>Real-time analysis of repository code</li>
+    <li>Detailed import information with line numbers</li>
+  </ul>
+  
+  <div class="instructions">
+    <strong>How to use:</strong><br>
+    1. Navigate to any file on GitHub<br>
+    2. Click the "📊 Show Dependencies" button<br>
+    3. View the dependency tree overlay
+  </div>
+  
+  <p style="margin-top: 16px; font-size: 11px; text-align: center;">
+    Made with ❤️ for developers
+  </p>
+</body>
+</html>
