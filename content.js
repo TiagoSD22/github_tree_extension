@@ -110,6 +110,16 @@ function updateOverlay(data) {
     return;
   }
   
+  // Group dependencies by depth for better visualization
+  const depsByDepth = {};
+  data.dependencies.forEach(dep => {
+    const depth = dep.depth || 0;
+    if (!depsByDepth[depth]) {
+      depsByDepth[depth] = [];
+    }
+    depsByDepth[depth].push(dep);
+  });
+  
   // Build dependency tree HTML
   let html = `
     <div class="dep-tree-stats">
@@ -119,27 +129,46 @@ function updateOverlay(data) {
     <div class="dep-tree-list">
   `;
   
-  data.dependencies.forEach(dep => {
-    html += `
-      <div class="dep-item">
-        <div class="dep-file">
-          <a href="/${data.repoInfo.owner}/${data.repoInfo.repo}/blob/${data.repoInfo.branch}/${dep.file}" 
-             target="_blank">
-            📄 ${dep.file}
-          </a>
-        </div>
-        ${dep.imports && dep.imports.length > 0 ? `
-          <div class="dep-imports">
-            ${dep.imports.map(imp => `
-              <div class="dep-import-item">
-                <code>${imp.type}</code>: <span class="dep-symbol">${imp.symbol || imp.module}</span>
-                ${imp.line ? `<span class="dep-line">Line ${imp.line}</span>` : ''}
-              </div>
-            `).join('')}
+  // Render by depth level
+  Object.keys(depsByDepth).sort((a, b) => a - b).forEach(depth => {
+    if (parseInt(depth) > 0) {
+      html += `<div class="dep-tree-level" data-level="${depth}">
+        <div class="dep-tree-level-header">📍 Level ${depth} Dependencies</div>`;
+    }
+    
+    depsByDepth[depth].forEach(dep => {
+      const fileName = dep.file.split('/').pop();
+      const fileDir = dep.file.substring(0, dep.file.lastIndexOf('/'));
+      
+      html += `
+        <div class="dep-item" data-depth="${dep.depth || 0}">
+          <div class="dep-file">
+            <a href="/${data.repoInfo.owner}/${data.repoInfo.repo}/blob/${data.repoInfo.branch}/${dep.file}" 
+               target="_blank" title="${dep.file}">
+              📄 ${fileName}
+            </a>
+            ${fileDir ? `<div class="dep-file-path">${fileDir}</div>` : ''}
           </div>
-        ` : ''}
-      </div>
-    `;
+          ${dep.chain && dep.chain.length > 1 ? `
+            <div class="dep-chain">
+              <div class="dep-chain-label">Chain:</div>
+              <div class="dep-chain-path">
+                ${dep.chain.map((f, i) => `
+                  <span class="dep-chain-item" title="${f}">
+                    ${f.split('/').pop()}
+                    ${i < dep.chain.length - 1 ? '<span class="dep-chain-arrow">→</span>' : ''}
+                  </span>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    });
+    
+    if (parseInt(depth) > 0) {
+      html += '</div>';
+    }
   });
   
   html += '</div>';
