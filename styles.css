@@ -139,12 +139,36 @@
   gap: 12px;
 }
 
+/* Depth levels */
+.dep-tree-level {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 2px solid #f0f0f0;
+}
+
+.dep-tree-level:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.dep-tree-level-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6366f1;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
 .dep-item {
   border: 1px solid #d0d7de;
   border-radius: 6px;
   padding: 12px;
   background: #ffffff;
   transition: all 0.2s;
+  margin-left: calc(var(--depth, 0) * 8px);
 }
 
 .dep-item:hover {
@@ -169,6 +193,56 @@
 
 .dep-file a:hover {
   text-decoration: underline;
+}
+
+/* File path */
+.dep-file-path {
+  font-size: 11px;
+  color: #8c959f;
+  margin-top: 4px;
+  word-break: break-all;
+}
+
+/* Dependency chains */
+.dep-chain {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.dep-chain-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #656d76;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.dep-chain-path {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.dep-chain-item {
+  background: #f6f8fa;
+  border: 1px solid #d0d7de;
+  padding: 4px 8px;
+  border-radius: 4px;
+  color: #1f2328;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+
+.dep-chain-arrow {
+  color: #6366f1;
+  font-weight: bold;
+  margin: 0 2px;
 }
 
 /* Import details */
