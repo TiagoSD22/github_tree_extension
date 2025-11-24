@@ -31,8 +31,13 @@ async function handleAnalyzeDependencies(repoInfo, language) {
     const relevantFiles = filterFilesByLanguage(files, language);
     console.log(`Found ${relevantFiles.length} relevant files for language: ${language}`);
     
-    // Download and analyze files to find dependencies
-    const dependencies = await findDependencies(repoInfo, relevantFiles, repoInfo.filePath);
+    // Build dependency map for all files (one-time cost)
+    console.log('Building complete dependency map...');
+    const dependencyMap = await buildDependencyMap(repoInfo, relevantFiles);
+    console.log('Dependency map built');
+    
+    // Find recursive dependency chains using BFS
+    const dependencies = await findRecursiveDependencies(dependencyMap, repoInfo.filePath);
     
     return {
       repoInfo,
@@ -100,58 +105,6 @@ function filterFilesByLanguage(files, language) {
   });
 }
 
-// Find files that import the target file
-async function findDependencies(repoInfo, files, targetFilePath) {
-  const dependencies = [];
-  const targetFileName = targetFilePath.split('/').pop();
-  const targetBaseName = targetFileName.replace(/\.(js|jsx|ts|tsx|py)$/, '');
-  
-  // Limit concurrent requests
-  const BATCH_SIZE = 10;
-  
-  for (let i = 0; i < files.length; i += BATCH_SIZE) {
-    const batch = files.slice(i, i + BATCH_SIZE);
-    const batchResults = await Promise.all(
-      batch.map(file => analyzeFileForImports(repoInfo, file, targetFilePath, targetBaseName))
-    );
-    
-    batchResults.forEach(result => {
-      if (result && result.imports.length > 0) {
-        dependencies.push(result);
-      }
-    });
-  }
-  
-  return dependencies;
-}
-
-// Analyze a single file for imports
-async function analyzeFileForImports(repoInfo, filePath, targetFilePath, targetBaseName) {
-  try {
-    // Don't analyze the target file itself
-    if (filePath === targetFilePath) {
-      return null;
-    }
-    
-    const content = await fetchFileContent(repoInfo, filePath);
-    if (!content) return null;
-    
-    const imports = parseImports(content, targetFilePath, targetBaseName, filePath);
-    
-    if (imports.length > 0) {
-      return {
-        file: filePath,
-        imports
-      };
-    }
-    
-    return null;
-  } catch (error) {
-    console.error(`Error analyzing ${filePath}:`, error);
-    return null;
-  }
-}
-
 // Fetch file content from GitHub
 async function fetchFileContent(repoInfo, filePath) {
   try {
@@ -167,125 +120,92 @@ async function fetchFileContent(repoInfo, filePath) {
   }
 }
 
-// Parse imports from file content
-function parseImports(content, targetFilePath, targetBaseName, currentFilePath) {
+// ============================================
+// RECURSIVE BFS SEARCH FOR DEPENDENCY CHAINS
+// ============================================
+
+// Build a complete dependency map for all files (maps each file to files that import it)
+async function buildDependencyMap(repoInfo, files) {
+  const dependencyMap = new Map(); // file -> Set of files that import it
+  
+  const BATCH_SIZE = 10;
+  
+  for (let i = 0; i < files.length; i += BATCH_SIZE) {
+    const batch = files.slice(i, i + BATCH_SIZE);
+    await Promise.all(
+      batch.map(async (filePath) => {
+        try {
+          const content = await fetchFileContent(repoInfo, filePath);
+          if (!content) return;
+          
+          // Parse what this file imports
+          const imports = parseAllImports(content, filePath);
+          
+          // Add reverse dependency: if A imports B, then B has A as dependent
+          imports.forEach(importedFile => {
+            if (!dependencyMap.has(importedFile)) {
+              dependencyMap.set(importedFile, new Set());
+            }
+            dependencyMap.get(importedFile).add({
+              file: filePath,
+              imports: [{ type: 'import' }]
+            });
+          });
+        } catch (error) {
+          // Silently skip files that can't be read
+        }
+      })
+    );
+  }
+  
+  return dependencyMap;
+}
+
+// Parse all imports from a file (returns array of imported file paths)
+function parseAllImports(content, currentFilePath) {
   const imports = [];
   const lines = content.split('\n');
-  
-  // Calculate relative path patterns
-  const targetDir = targetFilePath.split('/').slice(0, -1).join('/');
   const currentDir = currentFilePath.split('/').slice(0, -1).join('/');
   
-  lines.forEach((line, index) => {
-    const lineNumber = index + 1;
-    
-    // JavaScript/TypeScript import patterns
-    // import ... from 'path'
-    const importMatch = line.match(/import\s+(?:(\{[^}]+\}|\*\s+as\s+\w+|\w+)(?:\s*,\s*(\{[^}]+\}|\*\s+as\s+\w+|\w+))?\s+from\s+)?['"]([^'"]+)['"]/);
-    if (importMatch) {
-      const importPath = importMatch[3];
-      if (isTargetImport(importPath, targetFilePath, targetBaseName, currentDir, targetDir)) {
-        imports.push({
-          type: 'import',
-          symbol: importMatch[1] || importMatch[2] || 'default',
-          module: importPath,
-          line: lineNumber
-        });
-      }
+  lines.forEach((line) => {
+    // JavaScript/TypeScript imports
+    const jsImportMatch = line.match(/import\s+(?:(?:\{[^}]+\}|\*\s+as\s+\w+|\w+)(?:\s*,\s*(?:\{[^}]+\}|\*\s+as\s+\w+|\w+))?\s+from\s+)?['"]([^'"]+)['"]/);
+    if (jsImportMatch) {
+      const importPath = normalizeImportPath(jsImportMatch[1], currentDir);
+      if (importPath) imports.push(importPath);
     }
     
-    // require() pattern
-    const requireMatch = line.match(/(?:const|let|var)\s+(\w+|\{[^}]+\})\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/);
+    // CommonJS requires
+    const requireMatch = line.match(/require\s*\(\s*['"]([^'"]+)['"]\s*\)/);
     if (requireMatch) {
-      const importPath = requireMatch[2];
-      if (isTargetImport(importPath, targetFilePath, targetBaseName, currentDir, targetDir)) {
-        imports.push({
-          type: 'require',
-          symbol: requireMatch[1],
-          module: importPath,
-          line: lineNumber
-        });
-      }
+      const importPath = normalizeImportPath(requireMatch[1], currentDir);
+      if (importPath) imports.push(importPath);
     }
     
-    // Python import patterns
-    // from module import ...
-    const pythonFromMatch = line.match(/from\s+([.\w]+)\s+import\s+(.+)/);
+    // Python imports
+    const pythonFromMatch = line.match(/from\s+([.\w]+)\s+import/);
     if (pythonFromMatch) {
-      const modulePath = pythonFromMatch[1];
-      const symbols = pythonFromMatch[2];
-      if (isPythonTargetImport(modulePath, targetFilePath, targetBaseName, currentDir)) {
-        imports.push({
-          type: 'from-import',
-          symbol: symbols.trim(),
-          module: modulePath,
-          line: lineNumber
-        });
-      }
+      const importPath = pythonFromMatch[1].replace(/\./g, '/') + '.py';
+      imports.push(importPath);
     }
     
-    // import module
-    const pythonImportMatch = line.match(/import\s+([.\w]+)(?:\s+as\s+\w+)?/);
+    const pythonImportMatch = line.match(/^import\s+([.\w]+)/);
     if (pythonImportMatch) {
-      const modulePath = pythonImportMatch[1];
-      if (isPythonTargetImport(modulePath, targetFilePath, targetBaseName, currentDir)) {
-        imports.push({
-          type: 'import',
-          symbol: modulePath,
-          module: modulePath,
-          line: lineNumber
-        });
-      }
+      const importPath = pythonImportMatch[1].replace(/\./g, '/') + '.py';
+      imports.push(importPath);
     }
   });
   
   return imports;
 }
 
-// Check if an import path refers to the target file
-function isTargetImport(importPath, targetFilePath, targetBaseName, currentDir, targetDir) {
-  // Normalize paths
-  importPath = importPath.replace(/^\.\//, '').replace(/\\/g, '/');
+// Normalize import path to file path
+function normalizeImportPath(importPath, currentDir) {
+  // Remove extension and add common ones
+  const basePath = importPath.replace(/^\.\/|^\.\.\//, '');
   
-  // Check if import path matches target file
-  if (importPath === targetFilePath || 
-      importPath === './' + targetFilePath ||
-      importPath === '../' + targetFilePath) {
-    return true;
-  }
-  
-  // Check basename match (without extension)
-  const importBaseName = importPath.split('/').pop().replace(/\.(js|jsx|ts|tsx)$/, '');
-  if (importBaseName === targetBaseName) {
-    // Need to verify it resolves to the same file
-    const resolvedPath = resolveImportPath(importPath, currentDir);
-    const targetResolved = targetFilePath.replace(/\.(js|jsx|ts|tsx)$/, '');
-    
-    if (resolvedPath === targetResolved || resolvedPath === targetFilePath) {
-      return true;
-    }
-  }
-  
-  return false;
-}
-
-// Check if a Python import refers to the target file
-function isPythonTargetImport(modulePath, targetFilePath, targetBaseName, currentDir) {
-  // Convert Python module path to file path
-  const moduleFilePath = modulePath.replace(/\./g, '/');
-  
-  // Check if it matches target
-  const targetPyPath = targetFilePath.replace(/\.py$/, '');
-  
-  return moduleFilePath === targetPyPath || 
-         moduleFilePath.endsWith('/' + targetBaseName) ||
-         modulePath.endsWith('.' + targetBaseName);
-}
-
-// Resolve relative import path to absolute path
-function resolveImportPath(importPath, currentDir) {
   if (importPath.startsWith('./')) {
-    return currentDir + '/' + importPath.slice(2);
+    return currentDir + '/' + basePath;
   } else if (importPath.startsWith('../')) {
     const parts = currentDir.split('/');
     let path = importPath;
@@ -295,5 +215,103 @@ function resolveImportPath(importPath, currentDir) {
     }
     return parts.join('/') + '/' + path;
   }
-  return importPath;
+  
+  return basePath;
+}
+
+// BFS search to find all files that depend on the target file (recursively)
+async function findRecursiveDependencies(dependencyMap, targetFilePath) {
+  const allDependents = [];
+  const visited = new Set();
+  const queue = [{
+    file: targetFilePath,
+    depth: 0,
+    chain: [targetFilePath]
+  }];
+  
+  // Normalize target file path
+  const normalizedTarget = normalizeFilePath(targetFilePath);
+  
+  console.log(`Starting BFS search for dependents of ${normalizedTarget}`);
+  
+  while (queue.length > 0) {
+    const current = queue.shift();
+    const normalizedCurrent = normalizeFilePath(current.file);
+    
+    // Skip if already visited
+    const visitKey = `${normalizedCurrent}_depth${current.depth}`;
+    if (visited.has(visitKey)) {
+      continue;
+    }
+    visited.add(visitKey);
+    
+    // Skip the target file itself on first iteration
+    if (current.depth === 0) {
+      const directDependents = findDirectDependents(dependencyMap, normalizedCurrent, targetFilePath);
+      
+      console.log(`Found ${directDependents.length} direct dependents of target file`);
+      
+      directDependents.forEach(dependent => {
+        const chainEntry = {
+          ...dependent,
+          depth: 1,
+          chain: [targetFilePath, dependent.file]
+        };
+        allDependents.push(chainEntry);
+        queue.push({
+          file: dependent.file,
+          depth: 1,
+          chain: chainEntry.chain
+        });
+      });
+    } else {
+      // Find dependents of this file
+      const directDependents = findDirectDependents(dependencyMap, normalizedCurrent, current.file);
+      
+      directDependents.forEach(dependent => {
+        const newChain = [...current.chain, dependent.file];
+        const chainEntry = {
+          ...dependent,
+          depth: current.depth + 1,
+          chain: newChain
+        };
+        allDependents.push(chainEntry);
+        queue.push({
+          file: dependent.file,
+          depth: current.depth + 1,
+          chain: newChain
+        });
+      });
+    }
+  }
+  
+  console.log(`BFS complete: found ${allDependents.length} total dependents`);
+  return allDependents;
+}
+
+// Normalize file path for comparison
+function normalizeFilePath(filePath) {
+  return filePath
+    .replace(/\\/g, '/')
+    .replace(/\.(js|jsx|ts|tsx|py)$/, '')
+    .toLowerCase();
+}
+
+// Find direct dependents of a file in the dependency map
+function findDirectDependents(dependencyMap, normalizedFile, originalTargetPath) {
+  const directDependents = [];
+  
+  // Search through all keys in the map for matches
+  for (const [file, dependents] of dependencyMap) {
+    const normalizedKey = normalizeFilePath(file);
+    
+    // Check if this key matches our target
+    if (normalizedKey === normalizedFile || file === originalTargetPath) {
+      dependents.forEach(dependent => {
+        directDependents.push(dependent);
+      });
+    }
+  }
+  
+  return directDependents;
 }
